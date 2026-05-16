@@ -4,6 +4,9 @@ import de.priyme.itemlimiter.ItemLimiter;
 import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.Player;
+import org.bukkit.event.inventory.InventoryType;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.ItemStack;
 
 import java.util.HashMap;
@@ -69,8 +72,24 @@ public class LimitManager {
         }
         
         ItemStack cursor = player.getItemOnCursor();
-        if (cursor.getType() == material) {
+        if (cursor != null && cursor.getType() == material) {
             count += cursor.getAmount();
+        }
+
+        // FIX: GUI berücksichtigt jetzt auch Crafting-Felder
+        InventoryView view = player.getOpenInventory();
+        if (view.getType() == InventoryType.CRAFTING) {
+            Inventory topInv = view.getTopInventory();
+            for (int i = 1; i <= 4; i++) {
+                ItemStack item = topInv.getItem(i);
+                if (item != null && item.getType() == material) count += item.getAmount();
+            }
+        } else if (view.getType() == InventoryType.WORKBENCH) {
+            Inventory topInv = view.getTopInventory();
+            for (int i = 1; i <= 9; i++) {
+                ItemStack item = topInv.getItem(i);
+                if (item != null && item.getType() == material) count += item.getAmount();
+            }
         }
 
         return count;
@@ -83,7 +102,6 @@ public class LimitManager {
         int current = countItems(player, material);
         return (current + incomingAmount) <= limit;
     }
-
 
     public int getRemainingSpace(Player player, Material material) {
         int limit = getLimit(material);
