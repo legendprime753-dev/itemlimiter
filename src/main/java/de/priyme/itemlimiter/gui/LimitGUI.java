@@ -33,7 +33,6 @@ public class LimitGUI implements InventoryHolder {
     private void initializeItems() {
         inventory.clear();
 
-        // Add Button
         ItemStack addHandItem = new ItemStack(Material.LIME_DYE);
         ItemMeta addMeta = addHandItem.getItemMeta();
         addMeta.displayName(Component.text("§a+ Limit Item in Hand"));
@@ -41,7 +40,6 @@ public class LimitGUI implements InventoryHolder {
         addHandItem.setItemMeta(addMeta);
         inventory.setItem(4, addHandItem);
 
-        // Filler
         ItemStack filler = new ItemStack(Material.GRAY_STAINED_GLASS_PANE);
         ItemMeta fillerMeta = filler.getItemMeta();
         fillerMeta.displayName(Component.empty());
@@ -50,7 +48,6 @@ public class LimitGUI implements InventoryHolder {
             inventory.setItem(i, filler);
         }
 
-        // List Items
         int index = 18;
         for (Map.Entry<Material, Integer> entry : limitManager.getLimits().entrySet()) {
             if (index >= 54) break;
@@ -89,7 +86,6 @@ public class LimitGUI implements InventoryHolder {
 
         if (clicked == null || clicked.getType() == Material.AIR) return;
 
-        // Slot 4: Add Hand Item
         if (event.getSlot() == 4) {
             ItemStack hand = viewer.getInventory().getItemInMainHand();
             if (hand.getType() == Material.AIR) {

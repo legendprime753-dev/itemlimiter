@@ -11,3 +11,11 @@ limits:
 enabled-worlds: []
 #  - "world"
 #  - "farmworld"
+
+# Limit specific potions or arrows by using MATERIAL:POTION_TYPE
+# 0 means completely blocked!
+  POTION:STRONG_HARMING: 0
+  SPLASH_POTION:STRONG_HARMING: 0
+  LINGERING_POTION:STRONG_HARMING: 0
+  TIPPED_ARROW:STRONG_HARMING: 0
+  POTION:HARMING: 1

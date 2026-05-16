@@ -11,3 +11,12 @@ limits:
 enabled-worlds: []
 #  - "world"
 #  - "farmworld"
+
+# Limit specific potions (0 to block completely)
+potion-limits:
+  STRONG_HARMING: 0
+  HARMING: 1
+
+# Limit specific tipped arrows (0 to block completely)
+arrow-limits:
+  STRONG_HARMING: 0

@@ -84,10 +84,7 @@ public class LimitManager {
         return (current + incomingAmount) <= limit;
     }
 
-    /**
-     * Returns how many more items of this type the player can pick up.
-     * Returns Integer.MAX_VALUE if there is no limit.
-     */
+
     public int getRemainingSpace(Player player, Material material) {
         int limit = getLimit(material);
         if (limit == -1) return Integer.MAX_VALUE;

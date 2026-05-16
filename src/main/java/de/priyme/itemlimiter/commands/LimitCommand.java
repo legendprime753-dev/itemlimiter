@@ -23,7 +23,6 @@ import java.util.Map;
 public class LimitCommand implements CommandExecutor, Listener {
 
     private final ItemLimiter plugin;
-    // Translate Title
     private final Component GUI_TITLE = Component.text("ItemLimiter Management", NamedTextColor.DARK_PURPLE);
 
     public LimitCommand(ItemLimiter plugin) {
@@ -49,7 +48,6 @@ public class LimitCommand implements CommandExecutor, Listener {
     private void openGUI(Player player) {
         Inventory gui = Bukkit.createInventory(null, 54, GUI_TITLE);
 
-        // Guide Item
         ItemStack info = new ItemStack(Material.BOOK);
         ItemMeta meta = info.getItemMeta();
         meta.displayName(Component.text("Guide", NamedTextColor.GOLD));
@@ -62,7 +60,6 @@ public class LimitCommand implements CommandExecutor, Listener {
         info.setItemMeta(meta);
         gui.setItem(4, info);
 
-        // List Limits
         int slot = 9;
         for (Map.Entry<Material, Integer> entry : plugin.getLimits().entrySet()) {
             if (slot >= 54) break;
@@ -96,7 +93,6 @@ public class LimitCommand implements CommandExecutor, Listener {
         ItemStack clicked = event.getCurrentItem();
         if (clicked == null || clicked.getType() == Material.AIR) return;
 
-        // Top Inventory (GUI) -> Edit
         if (event.getClickedInventory() == event.getView().getTopInventory()) {
             Material mat = clicked.getType();
             if (!plugin.getLimits().containsKey(mat)) return;
@@ -104,18 +100,15 @@ public class LimitCommand implements CommandExecutor, Listener {
             int current = plugin.getLimits().get(mat);
 
             if (event.isShiftClick()) {
-                // Remove
                 plugin.getLimits().remove(mat);
                 plugin.getConfig().set("limits." + mat.name(), null);
                 player.playSound(player.getLocation(), Sound.BLOCK_ANVIL_BREAK, 1f, 1f);
             } else if (event.isRightClick()) {
-                // Decrease
                 int newVal = Math.max(1, current - 1);
                 plugin.getLimits().put(mat, newVal);
                 plugin.getConfig().set("limits." + mat.name(), newVal);
                 player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
             } else if (event.isLeftClick()) {
-                // Increase
                 int newVal = current + 1;
                 plugin.getLimits().put(mat, newVal);
                 plugin.getConfig().set("limits." + mat.name(), newVal);
@@ -124,7 +117,6 @@ public class LimitCommand implements CommandExecutor, Listener {
             plugin.saveConfig();
             openGUI(player); 
         } 
-        // Bottom Inventory (Player) -> Add
         else {
             Material mat = clicked.getType();
             if (plugin.getLimits().containsKey(mat)) {

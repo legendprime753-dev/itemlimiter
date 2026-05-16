@@ -1,5 +1,6 @@
-package de.priyme.itemlimiter;
+package de.priyme.itemlimiter.listener;
 
+import de.priyme.itemlimiter.ItemLimiter;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Material;
@@ -9,16 +10,23 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityPickupItemEvent;
+import org.bukkit.event.entity.EntityShootBowEvent;
+import org.bukkit.event.entity.LingeringPotionSplashEvent;
+import org.bukkit.event.entity.PotionSplashEvent;
 import org.bukkit.event.inventory.CraftItemEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryType;
+import org.bukkit.event.player.PlayerItemConsumeEvent;
 import org.bukkit.inventory.CraftingInventory;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.PotionMeta;
 
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Set;
 
 public class ItemLimiterListener implements Listener {
 
@@ -28,36 +36,63 @@ public class ItemLimiterListener implements Listener {
         this.plugin = plugin;
     }
 
-    /**
-     * Zählt Items im Inventar, im Cursor UND im Crafting-Grid.
-     */
-    private int countItems(Player player, Material material) {
+    public static String getItemKey(ItemStack item) {
+        if (item == null || item.getType() == Material.AIR) return null;
+        Material mat = item.getType();
+        
+        if (mat == Material.POTION || mat == Material.SPLASH_POTION || mat == Material.LINGERING_POTION || mat == Material.TIPPED_ARROW) {
+            if (item.getItemMeta() instanceof PotionMeta meta) {
+                return mat.name() + ":" + meta.getBasePotionType().name();
+            }
+        }
+        return mat.name();
+    }
+
+    private int getLimit(ItemStack item) {
+        String key = getItemKey(item);
+        if (key == null) return -1;
+
+        // Try specific key like SPLASH_POTION:STRONG_HARMING
+        if (plugin.getLimits().containsKey(key)) {
+            return plugin.getLimits().get(key);
+        }
+        
+        // Try fallback to just material like SPLASH_POTION
+        if (key.contains(":") && plugin.getLimits().containsKey(item.getType().name())) {
+            return plugin.getLimits().get(item.getType().name());
+        }
+
+        return -1;
+    }
+
+    private boolean isSameLimitedItem(ItemStack item1, ItemStack item2) {
+        String key1 = getItemKey(item1);
+        String key2 = getItemKey(item2);
+        
+        if (key1 == null || key2 == null) return false;
+        
+        // Items are considered the same if their limit keys exactly match
+        // Example: SPLASH_POTION:STRONG_HARMING == SPLASH_POTION:STRONG_HARMING
+        return key1.equals(key2);
+    }
+
+    private int countSimilarItems(Player player, ItemStack reference) {
         int count = 0;
-
-        // 1. Inventar Inhalt (Main, Hotbar, Offhand, Armor)
+        // Inventory Content
         for (ItemStack item : player.getInventory().getContents()) {
-            if (item != null && item.getType() == material) {
-                count += item.getAmount();
-            }
+            if (isSameLimitedItem(item, reference)) count += item.getAmount();
         }
-
-        // 2. Cursor (Mauszeiger)
+        // Cursor
         ItemStack cursor = player.getItemOnCursor();
-        if (cursor != null && cursor.getType() == material) {
-            count += cursor.getAmount();
-        }
+        if (isSameLimitedItem(cursor, reference)) count += cursor.getAmount();
 
-        // 3. Crafting Grid (NEU: Damit wird Crafting als "Besitz" gezählt)
+        // Crafting Grid
         Inventory topInv = player.getOpenInventory().getTopInventory();
-        if (topInv instanceof CraftingInventory crafting) {
-            // getMatrix() ignoriert den Output-Slot, wir zählen nur Inputs
-            for (ItemStack item : crafting.getMatrix()) {
-                if (item != null && item.getType() == material) {
-                    count += item.getAmount();
-                }
+        if (topInv instanceof CraftingInventory) {
+            for (ItemStack item : ((CraftingInventory) topInv).getMatrix()) {
+                if (isSameLimitedItem(item, reference)) count += item.getAmount();
             }
         }
-
         return count;
     }
 
@@ -67,7 +102,50 @@ public class ItemLimiterListener implements Listener {
         player.sendActionBar(Component.text(message, NamedTextColor.RED));
     }
 
-    // --- PICKUP ---
+    // --- INTERACTION BLOCKS (Limit = 0) ---
+
+    @EventHandler
+    public void onConsume(PlayerItemConsumeEvent event) {
+        ItemStack item = event.getItem();
+        if (getLimit(item) == 0) {
+            event.setCancelled(true);
+            sendFeedback(event.getPlayer(), "This potion is blocked!");
+        }
+    }
+
+    @EventHandler
+    public void onSplash(PotionSplashEvent event) {
+        if (event.getEntity().getShooter() instanceof Player player) {
+            if (getLimit(event.getEntity().getItem()) == 0) {
+                event.setCancelled(true);
+                sendFeedback(player, "This potion is blocked!");
+            }
+        }
+    }
+
+    @EventHandler
+    public void onLingeringSplash(LingeringPotionSplashEvent event) {
+        if (event.getEntity().getShooter() instanceof Player player) {
+            if (getLimit(event.getEntity().getItem()) == 0) {
+                event.setCancelled(true);
+                sendFeedback(player, "This potion is blocked!");
+            }
+        }
+    }
+
+    @EventHandler
+    public void onShootBow(EntityShootBowEvent event) {
+        if (event.getEntity() instanceof Player player) {
+            ItemStack arrow = event.getConsumable();
+            if (arrow != null && getLimit(arrow) == 0) {
+                event.setCancelled(true);
+                sendFeedback(player, "This arrow is blocked!");
+            }
+        }
+    }
+
+    // --- LIMIT CHECKS ---
+
     @EventHandler
     public void onPickup(EntityPickupItemEvent event) {
         if (!(event.getEntity() instanceof Player player)) return;
@@ -75,12 +153,11 @@ public class ItemLimiterListener implements Listener {
 
         Item itemEntity = event.getItem();
         ItemStack stack = itemEntity.getItemStack();
-        Material mat = stack.getType();
 
-        if (!plugin.getLimits().containsKey(mat)) return;
+        int limit = getLimit(stack);
+        if (limit == -1) return;
 
-        int limit = plugin.getLimits().get(mat);
-        int currentAmount = countItems(player, mat);
+        int currentAmount = countSimilarItems(player, stack);
 
         if (currentAmount >= limit) {
             event.setCancelled(true);
@@ -88,6 +165,7 @@ public class ItemLimiterListener implements Listener {
             return;
         }
 
+        // Smart Split Logic
         int spaceLeft = limit - currentAmount;
         if (stack.getAmount() > spaceLeft) {
             event.setCancelled(true);
@@ -105,85 +183,59 @@ public class ItemLimiterListener implements Listener {
         }
     }
 
-    // --- CLICK (Hier ist der wichtigste Fix) ---
     @EventHandler
     public void onInventoryClick(InventoryClickEvent event) {
         if (!(event.getWhoClicked() instanceof Player player)) return;
         if (!plugin.isWorldEnabled(player.getWorld().getName())) return;
 
-        // TEIL 1: Verhinderung des "Parkens" im Crafting-Grid
-        // Wenn man in ein Crafting-Inventar klickt UND einen limitierten Gegenstand platziert
         if (event.getClickedInventory() instanceof CraftingInventory && event.getSlotType() == InventoryType.SlotType.CRAFTING) {
             ItemStack cursor = event.getCursor();
-            
-            // Prüfen, ob Cursor limitiert ist
-            if (cursor != null && plugin.getLimits().containsKey(cursor.getType())) {
-                Material mat = cursor.getType();
-                int limit = plugin.getLimits().get(mat);
-                int current = countItems(player, mat); // Zählt jetzt Crafting mit!
-                
-                // Da countItems den Cursor bereits mitzählt, müssen wir prüfen:
-                // Würde das Platzieren (was countItems schon inkludiert hat im Cursor) das Limit sprengen?
-                // Logik: countItems = (Inv + Crafting + Cursor). 
-                // Wenn countItems > limit, ist der Spieler bereits drüber oder am Limit.
-                
-                // Wir wollen verhindern, dass er Items im Crafting Grid "versteckt".
-                // Da countItems das Grid jetzt mitzählt, ist die Logik einfach:
+            if (getLimit(cursor) != -1) {
+                int limit = getLimit(cursor);
+                int current = countSimilarItems(player, cursor);
                 if (current > limit) {
                     event.setCancelled(true);
                     sendFeedback(player, "Limit reached (Crafting)!");
-                    return; // Event hier abbrechen
+                    return;
                 }
             }
         }
 
-        // TEIL 2: Bestehende Logik für Kisten/Inventar
         ItemStack currentItem = event.getCurrentItem();
         ItemStack cursor = event.getCursor();
 
-        Material matToCheck = null;
-        if (cursor != null && plugin.getLimits().containsKey(cursor.getType())) matToCheck = cursor.getType();
-        else if (currentItem != null && plugin.getLimits().containsKey(currentItem.getType())) matToCheck = currentItem.getType();
+        ItemStack matToCheck = null;
+        if (getLimit(cursor) != -1) matToCheck = cursor;
+        else if (getLimit(currentItem) != -1) matToCheck = currentItem;
 
         if (matToCheck == null) return;
 
-        int limit = plugin.getLimits().get(matToCheck);
-        int currentCount = countItems(player, matToCheck);
+        int limit = getLimit(matToCheck);
+        int currentCount = countSimilarItems(player, matToCheck);
 
         Inventory clickedInv = event.getClickedInventory();
         boolean takingFromExternal = (clickedInv != null && clickedInv != player.getInventory() && !(clickedInv instanceof CraftingInventory));
 
-        // Nur blockieren, wenn man neue Items aus einer externen Kiste holt.
         if (currentCount >= limit && takingFromExternal) {
-            // Ausnahme: Wenn man Items in die Leere klickt oder droppt, nicht blockieren
             event.setCancelled(true);
             sendFeedback(player, "Limit reached!");
         }
     }
 
-    // --- DRAG (Verhindert Verteilen über Crafting Slots) ---
     @EventHandler
     public void onInventoryDrag(InventoryDragEvent event) {
         if (!(event.getWhoClicked() instanceof Player player)) return;
         if (!plugin.isWorldEnabled(player.getWorld().getName())) return;
 
-        // Prüfen ob das Drag-Event Slots im Crafting-Grid betrifft
         boolean involvesCrafting = event.getInventory() instanceof CraftingInventory;
         if (!involvesCrafting) return;
 
         ItemStack dragged = event.getOldCursor();
-        if (dragged == null || !plugin.getLimits().containsKey(dragged.getType())) return;
+        if (getLimit(dragged) == -1) return;
 
-        // Wenn einer der betroffenen Slots im Crafting-Bereich ist
         for (int slot : event.getRawSlots()) {
-             // In einer CraftingInventory View (z.B. Workbench) sind Slots 1-9 das Grid (ungefähr, variiert je nach Typ)
-             // Sicherer Weg: Wir zählen einfach alles.
-             
-             Material mat = dragged.getType();
-             int limit = plugin.getLimits().get(mat);
-             int current = countItems(player, mat);
-
-             // Wenn das Limit durch das Item am Cursor (das gerade verteilt wird) bereits erreicht/überschritten ist
+             int limit = getLimit(dragged);
+             int current = countSimilarItems(player, dragged);
              if (current > limit) {
                  event.setCancelled(true);
                  sendFeedback(player, "Limit reached!");
@@ -192,27 +244,16 @@ public class ItemLimiterListener implements Listener {
         }
     }
 
-    // --- CRAFTING (Resultat nehmen) ---
     @EventHandler
     public void onCraft(CraftItemEvent event) {
         if (!(event.getWhoClicked() instanceof Player player)) return;
         if (!plugin.isWorldEnabled(player.getWorld().getName())) return;
 
         ItemStack result = event.getRecipe().getResult();
-        Material mat = result.getType();
+        int limit = getLimit(result);
 
-        if (plugin.getLimits().containsKey(mat)) {
-            int limit = plugin.getLimits().get(mat);
-            
-            // Hier müssen wir aufpassen: countItems zählt die Zutaten im Grid mit.
-            // Wenn die Zutaten dasselbe Material sind wie das Ergebnis (z.B. Block zu Ingot), 
-            // verringert sich die Anzahl erst NACH dem Craften.
-            // Bukkit CraftItemEvent ist "Pre-Craft".
-            
-            int currentCount = countItems(player, mat);
-            
-            // Simple logic: Wenn current + result > limit -> Block
-            // (Etwas streng bei Umcrafting, aber sicher gegen Exploits)
+        if (limit != -1) {
+            int currentCount = countSimilarItems(player, result);
             if (currentCount + result.getAmount() > limit) {
                 event.setCancelled(true);
                 sendFeedback(player, "Limit reached via Crafting!");
@@ -220,31 +261,39 @@ public class ItemLimiterListener implements Listener {
         }
     }
 
-    // --- DER "BOUNCER" (ON CLOSE) - Als Safety Net ---
     @EventHandler
     public void onClose(InventoryCloseEvent event) {
         if (!(event.getPlayer() instanceof Player player)) return;
         if (!plugin.isWorldEnabled(player.getWorld().getName())) return;
 
-        for (Material mat : plugin.getLimits().keySet()) {
-            int limit = plugin.getLimits().get(mat);
+        Set<ItemStack> checked = new HashSet<>();
+
+        for (int i = 0; i <= player.getInventory().getSize(); i++) {
+            ItemStack item = i == player.getInventory().getSize() ? player.getItemOnCursor() : player.getInventory().getItem(i);
+            if (item == null || item.getType() == Material.AIR) continue;
             
-            // 1. Zählen (Benutzt jetzt die neue Methode, die auch Crafting Items im "Return Queue" erkennt)
-            int totalCount = countItems(player, mat);
+            int limit = getLimit(item);
+            if (limit == -1) continue;
+
+            boolean alreadyChecked = false;
+            for (ItemStack c : checked) {
+                if (isSameLimitedItem(c, item)) { alreadyChecked = true; break; }
+            }
+            if (alreadyChecked) continue;
+
+            checked.add(item.clone());
+
+            int totalCount = countSimilarItems(player, item);
             
-            // 2. Wenn zu viel -> Droppen
             if (totalCount > limit) {
                 int amountToRemove = totalCount - limit;
 
-                // Erstmal das Item droppen
-                ItemStack dropStack = new ItemStack(mat, amountToRemove);
+                ItemStack dropStack = item.clone();
+                dropStack.setAmount(amountToRemove);
                 player.getWorld().dropItem(player.getLocation(), dropStack);
                 
-                // LÖSCHEN
-                
-                // A: Cursor
                 ItemStack cursor = player.getItemOnCursor();
-                if (cursor != null && cursor.getType() == mat) {
+                if (isSameLimitedItem(cursor, item)) {
                     if (cursor.getAmount() <= amountToRemove) {
                         amountToRemove -= cursor.getAmount();
                         player.setItemOnCursor(null); 
@@ -254,11 +303,20 @@ public class ItemLimiterListener implements Listener {
                     }
                 }
 
-                // B: Inventar
                 if (amountToRemove > 0) {
-                    // remove ist sicher, da Crafting-Items beim Close automatisch ins Inv zurückfallen
-                    // oder gedroppt werden von Bukkit, bevor dieses Event fertig ist.
-                    player.getInventory().removeItem(new ItemStack(mat, amountToRemove));
+                    for (int j = 0; j < player.getInventory().getSize(); j++) {
+                        ItemStack invItem = player.getInventory().getItem(j);
+                        if (isSameLimitedItem(invItem, item)) {
+                            if (invItem.getAmount() <= amountToRemove) {
+                                amountToRemove -= invItem.getAmount();
+                                player.getInventory().setItem(j, null);
+                            } else {
+                                invItem.setAmount(invItem.getAmount() - amountToRemove);
+                                amountToRemove = 0;
+                            }
+                        }
+                        if (amountToRemove <= 0) break;
+                    }
                 }
 
                 player.sendMessage(Component.text("Excess items were dropped!", NamedTextColor.RED));

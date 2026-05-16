@@ -7,31 +7,30 @@ import org.bukkit.plugin.java.JavaPlugin;
 import java.util.HashMap;
 import java.util.List;
 
+import de.priyme.itemlimiter.listener.ItemLimiterListener;
+
 public final class ItemLimiter extends JavaPlugin {
 
-    private final HashMap<Material, Integer> limits = new HashMap<>();
+    private final HashMap<String, Integer> limits = new HashMap<>();
     private List<String> enabledWorlds;
 
     @Override
     public void onEnable() {
-        // Config laden
         saveDefaultConfig();
         loadConfigValues();
 
-        // Listener registrieren
         getServer().getPluginManager().registerEvents(new ItemLimiterListener(this), this);
         
-        // Command & GUI Listener registrieren (DAS IST NEU)
         LimitCommand cmd = new LimitCommand(this);
         getCommand("limit").setExecutor(cmd);
         getServer().getPluginManager().registerEvents(cmd, this);
         
-        getLogger().info("ItemLimiter geladen!");
+        getLogger().info("ItemLimiter loaded!");
     }
 
     @Override
     public void onDisable() {
-        getLogger().info("ItemLimiter deaktiviert.");
+        getLogger().info("ItemLimiter disabled.");
     }
 
     public void loadConfigValues() {
@@ -44,17 +43,16 @@ public final class ItemLimiter extends JavaPlugin {
         if (config.isConfigurationSection("limits")) {
             for (String key : config.getConfigurationSection("limits").getKeys(false)) {
                 try {
-                    Material mat = Material.valueOf(key.toUpperCase());
                     int amount = config.getInt("limits." + key);
-                    limits.put(mat, amount);
-                } catch (IllegalArgumentException e) {
-                    getLogger().warning("Falsches Material in Config: " + key);
+                    limits.put(key.toUpperCase(), amount);
+                } catch (Exception e) {
+                    getLogger().warning("Invalid limit in config: " + key);
                 }
             }
         }
     }
 
-    public HashMap<Material, Integer> getLimits() {
+    public HashMap<String, Integer> getLimits() {
         return limits;
     }
 
