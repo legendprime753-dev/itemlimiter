@@ -1,6 +1,5 @@
 package de.priyme.itemlimiter;
 
-import org.bukkit.Material;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -8,6 +7,7 @@ import java.util.HashMap;
 import java.util.List;
 
 import de.priyme.itemlimiter.listener.ItemLimiterListener;
+import de.priyme.itemlimiter.commands.LimitCommand; // <--- Das ist der fehlende Import!
 
 public final class ItemLimiter extends JavaPlugin {
 
