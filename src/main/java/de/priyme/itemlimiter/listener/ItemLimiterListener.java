@@ -3,6 +3,7 @@ package de.priyme.itemlimiter.listener;
 import de.priyme.itemlimiter.ItemLimiter;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.Sound;
 import org.bukkit.entity.Item;
@@ -21,6 +22,7 @@ import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
 import org.bukkit.inventory.CraftingInventory;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.PotionMeta;
 
@@ -52,12 +54,10 @@ public class ItemLimiterListener implements Listener {
         String key = getItemKey(item);
         if (key == null) return -1;
 
-        // Try specific key like SPLASH_POTION:STRONG_HARMING
         if (plugin.getLimits().containsKey(key)) {
             return plugin.getLimits().get(key);
         }
         
-        // Try fallback to just material like SPLASH_POTION
         if (key.contains(":") && plugin.getLimits().containsKey(item.getType().name())) {
             return plugin.getLimits().get(item.getType().name());
         }
@@ -68,31 +68,37 @@ public class ItemLimiterListener implements Listener {
     private boolean isSameLimitedItem(ItemStack item1, ItemStack item2) {
         String key1 = getItemKey(item1);
         String key2 = getItemKey(item2);
-        
         if (key1 == null || key2 == null) return false;
-        
-        // Items are considered the same if their limit keys exactly match
-        // Example: SPLASH_POTION:STRONG_HARMING == SPLASH_POTION:STRONG_HARMING
         return key1.equals(key2);
     }
 
     private int countSimilarItems(Player player, ItemStack reference) {
         int count = 0;
-        // Inventory Content
+        // 1. Inventar
         for (ItemStack item : player.getInventory().getContents()) {
             if (isSameLimitedItem(item, reference)) count += item.getAmount();
         }
-        // Cursor
+        
+        // 2. Mauszeiger (Cursor)
         ItemStack cursor = player.getItemOnCursor();
         if (isSameLimitedItem(cursor, reference)) count += cursor.getAmount();
 
-        // Crafting Grid
-        Inventory topInv = player.getOpenInventory().getTopInventory();
-        if (topInv instanceof CraftingInventory) {
-            for (ItemStack item : ((CraftingInventory) topInv).getMatrix()) {
+        // 3. FIX: Crafting-Feld aktiv überwachen (auch das 2x2 Feld im eigenen Inventar)
+        InventoryView view = player.getOpenInventory();
+        if (view.getType() == InventoryType.CRAFTING) {
+            Inventory topInv = view.getTopInventory();
+            for (int i = 1; i <= 4; i++) { // 1 bis 4 ist das 2x2 Crafting-Feld
+                ItemStack item = topInv.getItem(i);
+                if (isSameLimitedItem(item, reference)) count += item.getAmount();
+            }
+        } else if (view.getType() == InventoryType.WORKBENCH) {
+            Inventory topInv = view.getTopInventory();
+            for (int i = 1; i <= 9; i++) {
+                ItemStack item = topInv.getItem(i);
                 if (isSameLimitedItem(item, reference)) count += item.getAmount();
             }
         }
+
         return count;
     }
 
@@ -102,14 +108,12 @@ public class ItemLimiterListener implements Listener {
         player.sendActionBar(Component.text(message, NamedTextColor.RED));
     }
 
-    // --- INTERACTION BLOCKS (Limit = 0) ---
-
     @EventHandler
     public void onConsume(PlayerItemConsumeEvent event) {
         ItemStack item = event.getItem();
         if (getLimit(item) == 0) {
             event.setCancelled(true);
-            sendFeedback(event.getPlayer(), "This potion is blocked!");
+            sendFeedback(event.getPlayer(), "This item is blocked!");
         }
     }
 
@@ -144,8 +148,6 @@ public class ItemLimiterListener implements Listener {
         }
     }
 
-    // --- LIMIT CHECKS ---
-
     @EventHandler
     public void onPickup(EntityPickupItemEvent event) {
         if (!(event.getEntity() instanceof Player player)) return;
@@ -165,7 +167,6 @@ public class ItemLimiterListener implements Listener {
             return;
         }
 
-        // Smart Split Logic
         int spaceLeft = limit - currentAmount;
         if (stack.getAmount() > spaceLeft) {
             event.setCancelled(true);
@@ -188,9 +189,72 @@ public class ItemLimiterListener implements Listener {
         if (!(event.getWhoClicked() instanceof Player player)) return;
         if (!plugin.isWorldEnabled(player.getWorld().getName())) return;
 
+        ItemStack currentItem = event.getCurrentItem();
+        ItemStack cursor = event.getCursor();
+
+        // 1. FIX BUNDLE BYPASS: Limitierten Items verbieten in ein Bundle zu gehen
+        boolean currentIsBundle = currentItem != null && currentItem.getItemMeta() instanceof org.bukkit.inventory.meta.BundleMeta;
+        boolean cursorIsBundle = cursor != null && cursor.getItemMeta() instanceof org.bukkit.inventory.meta.BundleMeta;
+        
+        if ((currentIsBundle && cursor != null && getLimit(cursor) != -1) || 
+            (cursorIsBundle && currentItem != null && getLimit(currentItem) != -1)) {
+            event.setCancelled(true);
+            sendFeedback(player, "You cannot put limited items in bundles!");
+            return;
+        }
+
+        // 2. FIX SHIFT-CLICK: Logik um externes looten zu verhindern
+        if (event.isShiftClick() && currentItem != null && getLimit(currentItem) != -1) {
+            Inventory clickedInv = event.getClickedInventory();
+            if (clickedInv != null && clickedInv != player.getInventory() && !(clickedInv instanceof CraftingInventory)) {
+                int limit = getLimit(currentItem);
+                int currentCount = countSimilarItems(player, currentItem);
+                
+                if (currentCount >= limit) {
+                    event.setCancelled(true);
+                    sendFeedback(player, "Limit reached!");
+                    return;
+                }
+                
+                int space = limit - currentCount;
+                if (currentItem.getAmount() > space) {
+                    event.setCancelled(true);
+                    ItemStack toMove = currentItem.clone();
+                    toMove.setAmount(space);
+                    HashMap<Integer, ItemStack> leftovers = player.getInventory().addItem(toMove);
+                    if (leftovers.isEmpty()) {
+                        currentItem.setAmount(currentItem.getAmount() - space);
+                    }
+                    sendFeedback(player, "Limit reached!");
+                    return;
+                }
+            }
+        }
+
+        // 3. FIX HOTBAR SWAP (Tasten 1-9):
+        if (event.getClick() == org.bukkit.event.inventory.ClickType.NUMBER_KEY) {
+            Inventory clickedInv = event.getClickedInventory();
+            if (clickedInv != null && clickedInv != player.getInventory() && !(clickedInv instanceof CraftingInventory)) {
+                if (currentItem != null && getLimit(currentItem) != -1) {
+                    ItemStack hotbarItem = player.getInventory().getItem(event.getHotbarButton());
+                    int limit = getLimit(currentItem);
+                    int currentCount = countSimilarItems(player, currentItem);
+                    
+                    if (isSameLimitedItem(hotbarItem, currentItem)) {
+                        currentCount -= hotbarItem.getAmount();
+                    }
+                    
+                    if (currentCount + currentItem.getAmount() > limit) {
+                        event.setCancelled(true);
+                        sendFeedback(player, "Limit reached!");
+                        return;
+                    }
+                }
+            }
+        }
+
         if (event.getClickedInventory() instanceof CraftingInventory && event.getSlotType() == InventoryType.SlotType.CRAFTING) {
-            ItemStack cursor = event.getCursor();
-            if (getLimit(cursor) != -1) {
+            if (cursor != null && getLimit(cursor) != -1) {
                 int limit = getLimit(cursor);
                 int current = countSimilarItems(player, cursor);
                 if (current > limit) {
@@ -199,26 +263,6 @@ public class ItemLimiterListener implements Listener {
                     return;
                 }
             }
-        }
-
-        ItemStack currentItem = event.getCurrentItem();
-        ItemStack cursor = event.getCursor();
-
-        ItemStack matToCheck = null;
-        if (getLimit(cursor) != -1) matToCheck = cursor;
-        else if (getLimit(currentItem) != -1) matToCheck = currentItem;
-
-        if (matToCheck == null) return;
-
-        int limit = getLimit(matToCheck);
-        int currentCount = countSimilarItems(player, matToCheck);
-
-        Inventory clickedInv = event.getClickedInventory();
-        boolean takingFromExternal = (clickedInv != null && clickedInv != player.getInventory() && !(clickedInv instanceof CraftingInventory));
-
-        if (currentCount >= limit && takingFromExternal) {
-            event.setCancelled(true);
-            sendFeedback(player, "Limit reached!");
         }
     }
 
@@ -266,22 +310,29 @@ public class ItemLimiterListener implements Listener {
         if (!(event.getPlayer() instanceof Player player)) return;
         if (!plugin.isWorldEnabled(player.getWorld().getName())) return;
 
-        Set<ItemStack> checked = new HashSet<>();
+        // FIX ON CLOSE: Wenn man ESC drückt, fallen die Items aus dem Crafting-Grid ins Inventar.
+        // Das passiert aber erst NACHDEM das Event triggert. 
+        // 1-Tick Delay sorgt dafür, dass wir danach prüfen und alles Überschüssige sicher droppen.
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            if (!player.isOnline()) return;
+            enforceLimits(player);
+        }, 1L);
+    }
+
+    private void enforceLimits(Player player) {
+        Set<String> checkedKeys = new HashSet<>();
 
         for (int i = 0; i <= player.getInventory().getSize(); i++) {
             ItemStack item = i == player.getInventory().getSize() ? player.getItemOnCursor() : player.getInventory().getItem(i);
             if (item == null || item.getType() == Material.AIR) continue;
             
+            String key = getItemKey(item);
+            if (key == null || checkedKeys.contains(key)) continue;
+
             int limit = getLimit(item);
             if (limit == -1) continue;
 
-            boolean alreadyChecked = false;
-            for (ItemStack c : checked) {
-                if (isSameLimitedItem(c, item)) { alreadyChecked = true; break; }
-            }
-            if (alreadyChecked) continue;
-
-            checked.add(item.clone());
+            checkedKeys.add(key);
 
             int totalCount = countSimilarItems(player, item);
             
